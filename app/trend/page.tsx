@@ -21,9 +21,10 @@ export default function TrendPage() {
   }));
   const flipped = rows.filter((r) => r.ols > 0 !== r.ts > 0);
   const fujiSkew = discarded.later_than_normal.per_mountain.find((r) => r.name === "富士山")?.skew_days;
-  const censoredFlips = Object.entries(trend.censored.slopes).filter(
-    ([code, v]) => trend.slopes[code] !== undefined && trend.slopes[code] > 0 && v <= 0,
-  );
+  // 打ち切って戻したとき負になる山と、そのうち「33 山の側」だったもの。
+  // 前者だけを数えると「8 山で符号が変わる」と読めてしまうが、実際には 33 山は動かない。
+  const censoredNegative = Object.entries(trend.censored.slopes).filter(([, v]) => v <= 0);
+  const censoredFlipsInside = censoredNegative.filter(([code]) => trend.slopes[code] !== undefined);
 
   return (
     <main>
@@ -128,14 +129,19 @@ export default function TrendPage() {
       <h2>この主張が届かないところ</h2>
       <div className="note">
         <strong>1. 「白くならなかった年」を持つ {trend.excluded.length} 山を外している。</strong>
-        その年は日付が無いので直線に載らない。外したままにせず、
-        寒候年の最終日で打ち切って 44 山に戻すと{" "}
+        その年は日付が無いので直線に載らない。外したままにせず、寒候年の最終日で打ち切って
+        44 山に戻すと{" "}
         <span className="nums">
           {trend.censored.n_positive} / {trend.censored.n_mountains}
         </span>{" "}
-        山・中央値 <span className="nums">+{trend.censored.median_slope_per_century.toFixed(1)} 日 / 100 年</span> になり、
-        <strong>{censoredFlips.length} 山で符号が変わる</strong>。打ち切りの日付は観測ではないので、
-        こちらを主たる結果にはしない。
+        山・中央値{" "}
+        <span className="nums">+{trend.censored.median_slope_per_century.toFixed(1)} 日 / 100 年</span>。
+        負に転じる <span className="nums">{censoredNegative.length}</span> 山は
+        <strong>すべて外していた側</strong>で、
+        {censoredFlipsInside.length === 0 ? "33 山の符号は一つも動かない" : `33 山のうち ${censoredFlipsInside.length} 山も動く`}。
+        ただし打ち切りに使う「7 月 31 日」は観測ではないので、こちらを主たる結果にはしない
+        —— 1960〜80 年代に集中する「なし」の年を最も遅い日に置くと、傾きは
+        <span className="nums"> −131</span> 日 / 100 年のような、その置き方だけで決まる値になる。
       </div>
       <div className="note">
         <strong>
