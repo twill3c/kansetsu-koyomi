@@ -1,0 +1,48 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: npm ci
+
+      - run: pip install --quiet pytest pypdf
+
+      - name: 型検査
+        run: npm run typecheck
+
+      - name: vitest
+        run: npm test
+
+      - name: pytest(品質ゲート)
+        run: python -m pytest -q
+
+      - name: 字種・制御文字
+        run: python harness/text_hygiene.py
+
+      - name: 出荷ビルド
+        run: npm run build
+
+      - name: 実ブラウザ検品
+        run: |
+          npx playwright install --with-deps chromium
+          npm run smoke
+
+      - name: ループログ
+        run: python harness/looplog.py validate

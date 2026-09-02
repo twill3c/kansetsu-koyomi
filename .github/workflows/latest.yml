@@ -1,0 +1,79 @@
+name: 今季の値を取り込む
+
+# 気象庁の「今季の山頂における積雪の状況」は毎時 25 分頃に更新される。
+# 冠雪が出るのは 9 月から 2 月にかけてなので、その期間だけ 6 時間ごとに引く。
+# 取り込みは data/latest.json をコミットするだけで、関数は一切増やさない。
+
+on:
+  schedule:
+    - cron: "40 0,6,12,18 * 9-12,1,2 *" # UTC。JST では 9:40 / 15:40 / 21:40 / 3:40
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: latest
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: pypdf を入れる
+        run: pip install --quiet pypdf
+
+      # raw/ は配らないので、CI では取り直しになる。動かない資料(定義 PDF・平年値ページ)
+      # まで毎回 200 件以上取りに行かないよう、raw/ を丸ごと持ち越す。
+      - name: raw/ を持ち越す
+        uses: actions/cache@v4
+        with:
+          path: raw
+          key: jma-raw-v1-${{ github.run_id }}
+          restore-keys: jma-raw-v1-
+
+      - name: 気象庁から取り直す
+        run: |
+          cd etl
+          python fetch.py --latest-only   # 今季の表(S-2)は必ず取り直す
+          python fetch.py                 # 足りないものだけ補う
+          python build.py
+
+      - name: 変化が無ければ何もしない
+        id: diff
+        run: |
+          if git diff --quiet -- data/; then
+            echo "changed=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=yes" >> "$GITHUB_OUTPUT"
+            git diff --stat -- data/
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.diff.outputs.changed == 'yes'
+        with:
+          node-version: "22"
+
+      - name: 出荷できることを確かめてからコミットする
+        if: steps.diff.outputs.changed == 'yes'
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          python -m pytest -q
+          npm run build
+
+      - name: コミット
+        if: steps.diff.outputs.changed == 'yes'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git commit -m "chore: 今季の値を取り込む"
+          git push
