@@ -175,7 +175,9 @@ export function SeriesChart({
         ))}
 
         {/* 欠測・現象なしの帯 */}
-        <text x={PAD.left - 6} y={H - PAD.bottom + 6} textAnchor="end" fontSize={10} fill="var(--ink-muted)">
+        {/* 左端に寄せる。右寄せにすると字幅の広い環境(Linux)で枠から出る —— 実測で Windows は通り
+            CI で落ちた。帯の行には他の文字が無いので、左端 0 から書いても重ならない。 */}
+        <text x={2} y={H - PAD.bottom + 4} textAnchor="start" fontSize={10} fill="var(--ink-muted)">
           記録なし
         </text>
         {undated.map((p) => (
