@@ -26,8 +26,12 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: pypdf を入れる
-        run: pip install --quiet pypdf
+      # pytest はコミット前の検査(下の「出荷できることを確かめてから」)が使う。
+      # 実測 2026-09-14: ここで pypdf しか入れておらず、9/2 の初回から 46 回中 46 回
+      # `No module named pytest` で落ちて、今季の値が一度もコミットされていなかった。
+      # その段は data/ に差分があるときだけ走るので、verify.yml の緑からは見えない(T-022)。
+      - name: pypdf と pytest を入れる
+        run: pip install --quiet pypdf pytest
 
       # raw/ は配らないので、CI では取り直しになる。動かない資料(定義 PDF・平年値ページ)
       # まで毎回 200 件以上取りに行かないよう、raw/ を丸ごと持ち越す。

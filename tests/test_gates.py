@@ -354,3 +354,74 @@ def test_latest_covers_every_mountain():
     official = {m["name"].replace("ケ", "ヶ") for m in load("mountains.json")}
     assert names == official, "今季の表と名簿がずれている: %r" % (names ^ official)
     assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:00\+09:00$", latest["asof"])
+
+
+# --- ワークフローの依存 ---------------------------------------------------
+# 実測(2026-09-14): latest.yml は python -m pytest を呼ぶのに pypdf しか入れておらず、
+# 初回から 46 回中 46 回落ちていた。verify.yml は pytest を入れていて緑だったので、
+# 緑の CI だけを見ていると気づけない。ランナーの Python は素なので、
+# ジョブで `python -m X` と呼ぶモジュールは、同じジョブで pip から入れていなければならない。
+
+WORKFLOWS = os.path.join(ROOT, ".github", "workflows")
+# ランナーの素の Python に最初からあるもの
+PY_BUNDLED = {"pip", "venv", "ensurepip", "http", "json", "unittest", "zipfile"}
+
+
+def missing_python_modules(workflow_text):
+    """ジョブごとに、`python -m X` で呼ぶが pip で入れていないモジュールを返す。
+
+    `pip install -r ...` のように中身がこのファイルから読めないジョブは判定しない。
+    """
+    body = workflow_text.split("\njobs:", 1)[-1]
+    jobs = re.split(r"\n  [A-Za-z0-9_-]+:[ \t]*(?=\n)", body)
+    missing = {}
+    for i, job in enumerate(jobs):
+        installed = set()
+        opaque = False
+        for line in re.findall(r"pip3? install ([^\n]*)", job):
+            for tok in line.split():
+                if tok in ("-r", "--requirement") or tok.startswith("-r"):
+                    opaque = True
+                if tok.startswith("-"):
+                    continue
+                name = re.split(r"[=<>!~\[;]", tok, maxsplit=1)[0]
+                installed.add(name.lower().replace("-", "_"))
+        if opaque:
+            continue
+        used = {m.split(".")[0].lower() for m in re.findall(r"python3? -m ([A-Za-z_][\w.]*)", job)}
+        lack = used - installed - PY_BUNDLED
+        if lack:
+            missing[i] = lack
+    return missing
+
+
+def test_workflow_dep_detector_positive_and_negative_control():
+    """陽性対照: 修正前の latest.yml と同じ形を捕まえる。陰性対照: 入れていれば撃たない。"""
+    before = (
+        "on: push\njobs:\n  refresh:\n    steps:\n"
+        "      - run: pip install --quiet pypdf\n"
+        "      - run: |\n          npm test\n          python -m pytest -q\n"
+    )
+    after = before.replace("pip install --quiet pypdf", "pip install --quiet pypdf pytest")
+    assert missing_python_modules(before) == {1: {"pytest"}}
+    assert missing_python_modules(after) == {}
+    # ジョブが分かれていれば、別ジョブで入れたものは数えない
+    split = (
+        "on: push\njobs:\n  a:\n    steps:\n      - run: pip install pytest\n"
+        "  b:\n    steps:\n      - run: python -m pytest\n"
+    )
+    assert missing_python_modules(split) == {2: {"pytest"}}
+    # 版の指定や extras が付いても名前で照合する
+    assert missing_python_modules("jobs:\n  a:\n    steps:\n      - run: pip install pytest==9.1.1\n      - run: python -m pytest\n") == {}
+
+
+def test_workflows_install_every_python_module_they_run():
+    names = sorted(f for f in os.listdir(WORKFLOWS) if f.endswith((".yml", ".yaml")))
+    assert names, "ワークフローが一つも見つからない(検査が何も見ていない)"
+    bad = {}
+    for name in names:
+        with open(os.path.join(WORKFLOWS, name), encoding="utf-8") as f:
+            lack = missing_python_modules(f.read())
+        if lack:
+            bad[name] = lack
+    assert not bad, "python -m で呼ぶのに同じジョブで入れていない: %r" % bad
